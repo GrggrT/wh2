@@ -1,0 +1,58 @@
+name: Deploy to Railway
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18.x'
+      
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+      
+      - name: Deploy to Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --detach
+      
+      - name: Wait for deployment
+        run: |
+          echo "Waiting for deployment to complete..."
+          sleep 30
+      
+      - name: Check deployment status
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          STATUS=$(railway status --json | jq -r '.status')
+          if [ "$STATUS" != "SUCCESS" ]; then
+            echo "Deployment failed with status: $STATUS"
+            exit 1
+          fi
+      
+      - name: Send notification
+        if: always()
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            MESSAGE="✅ Деплой успешно завершен"
+          else
+            MESSAGE="❌ Ошибка при деплое: ${{ job.status }}"
+          fi
+          curl -s -X POST https://api.telegram.org/bot${BOT_TOKEN}/sendMessage \
+            -d chat_id=${ADMIN_ID} \
+            -d text="$MESSAGE" \
+            -d parse_mode=HTML 

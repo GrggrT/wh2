@@ -14,7 +14,8 @@ from app.handlers import (
     workplaces,
     add_record,
     reports,
-    settings
+    settings,
+    calendar
 )
 
 # Импорт middleware
@@ -125,6 +126,7 @@ def register_handlers(dp: Dispatcher):
     add_record.register_handlers(dp)
     reports.register_handlers(dp)
     settings.register_handlers(dp)
+    calendar.register_handlers(dp)
 
 async def main():
     """

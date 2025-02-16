@@ -6,6 +6,7 @@ from apscheduler.triggers.cron import CronTrigger
 from aiogram import Bot
 from app.db.models import User, Record, Workplace
 from tortoise.transactions import atomic
+from app.utils.timezone_sync import timezone_sync
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,14 @@ class TaskScheduler:
             self.backup_database,
             CronTrigger(hour=3),  # Каждый день в 03:00
             id='backup_database',
+            replace_existing=True
+        )
+        
+        # Синхронизация часовых поясов
+        self.scheduler.add_job(
+            timezone_sync.sync_all_users,
+            CronTrigger(hour=4),  # Каждый день в 04:00
+            id='timezone_sync',
             replace_existing=True
         )
     

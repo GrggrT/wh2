@@ -26,6 +26,7 @@ from app.middlewares.rate_limiter import RateLimiterMiddleware
 from app.utils.health_check import HealthCheck
 from app.utils.scheduler import setup_scheduler
 from app.utils.webhook import WebhookServer
+from app.utils.notifications import setup_notifications
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -69,6 +70,11 @@ async def on_startup(dp: Dispatcher):
         # Инициализация планировщика задач
         scheduler = setup_scheduler(dp.bot)
         logger.info("Планировщик задач инициализирован")
+        
+        # Инициализация системы уведомлений
+        notifications = setup_notifications(dp.bot)
+        asyncio.create_task(notifications.start())
+        logger.info("Система уведомлений инициализирована")
 
         # Отправка уведомления администратору о запуске бота
         await dp.bot.send_message(
@@ -77,6 +83,7 @@ async def on_startup(dp: Dispatcher):
             f"Версия API: {(await dp.bot.get_me()).username}\n"
             f"База данных: подключена\n"
             f"Планировщик: активен\n"
+            f"Уведомления: активны\n"
             f"Режим логирования: {os.getenv('LOG_LEVEL', 'INFO')}"
         )
 
@@ -112,6 +119,12 @@ async def on_shutdown(dp: Dispatcher):
     if scheduler:
         scheduler.shutdown()
         logger.info("Планировщик задач остановлен")
+    
+    # Остановка системы уведомлений
+    from app.utils.notifications import notification_manager
+    if notification_manager:
+        await notification_manager.stop()
+        logger.info("Система уведомлений остановлена")
     
     # Закрытие соединений с базой данных
     await Tortoise.close_connections()

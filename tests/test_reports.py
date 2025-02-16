@@ -8,9 +8,11 @@ from app.handlers.reports import (
     generate_report,
     generate_efficiency_report,
     generate_activity_chart,
-    generate_heatmap
+    generate_heatmap,
+    process_export_format
 )
 from app.db.models import User, Workplace, Record
+from pathlib import Path
 
 @pytest.fixture
 async def user():
@@ -206,6 +208,146 @@ async def test_error_handling(message):
     message.reply.reset_mock()
     with patch('app.utils.analytics.analytics.get_efficiency_metrics', return_value=None):
         await generate_efficiency_report(message)
+        
+        message.reply.assert_called_once()
+        assert "❌ Ошибка" in message.reply.call_args[1]["text"]
+
+@pytest.mark.asyncio
+async def test_export_option(message):
+    """Тест опции экспорта в меню"""
+    await reports_handler(message)
+    
+    message.reply.assert_called_once()
+    args = message.reply.call_args[1]
+    assert "📊 Отчеты и аналитика" in args["text"]
+    
+    # Проверяем наличие кнопки экспорта
+    keyboard = args["reply_markup"].keyboard
+    button_texts = [button.text for row in keyboard for button in row]
+    assert "Экспорт данных" in button_texts
+
+@pytest.mark.asyncio
+async def test_export_format_selection(message):
+    """Тест выбора формата экспорта"""
+    message.text = "Экспорт данных"
+    state = Mock()
+    
+    await process_period_choice(message, state)
+    
+    message.reply.assert_called_once()
+    args = message.reply.call_args[1]
+    assert "📥 Экспорт данных" in args["text"]
+    assert isinstance(args["reply_markup"], types.ReplyKeyboardMarkup)
+    
+    # Проверяем наличие кнопок форматов
+    keyboard = args["reply_markup"].keyboard
+    button_texts = [button.text for row in keyboard for button in row]
+    assert "CSV" in button_texts
+    assert "JSON" in button_texts
+    assert "Excel" in button_texts
+    assert "Отмена" in button_texts
+
+@pytest.mark.asyncio
+async def test_export_to_csv(message, user, records):
+    """Тест экспорта в CSV"""
+    message.text = "CSV"
+    state = Mock()
+    
+    # Мокаем экспорт
+    mock_file = Path("test_export.csv")
+    with patch('app.utils.export.export_manager.export_records', return_value=mock_file):
+        await process_export_format(message, state)
+        
+        # Проверяем отправку файла
+        message.reply_document.assert_called_once()
+        call_args = message.reply_document.call_args[1]
+        assert isinstance(call_args["document"], types.InputFile)
+        assert call_args["document"].filename.endswith(".csv")
+        assert "✅ Данные успешно экспортированы" in call_args["caption"]
+
+@pytest.mark.asyncio
+async def test_export_to_json(message, user, records):
+    """Тест экспорта в JSON"""
+    message.text = "JSON"
+    state = Mock()
+    
+    # Мокаем экспорт
+    mock_file = Path("test_export.json")
+    with patch('app.utils.export.export_manager.export_records', return_value=mock_file):
+        await process_export_format(message, state)
+        
+        # Проверяем отправку файла
+        message.reply_document.assert_called_once()
+        call_args = message.reply_document.call_args[1]
+        assert isinstance(call_args["document"], types.InputFile)
+        assert call_args["document"].filename.endswith(".json")
+        assert "✅ Данные успешно экспортированы" in call_args["caption"]
+
+@pytest.mark.asyncio
+async def test_export_to_excel(message, user, records):
+    """Тест экспорта в Excel"""
+    message.text = "Excel"
+    state = Mock()
+    
+    # Мокаем экспорт
+    mock_file = Path("test_export.xlsx")
+    with patch('app.utils.export.export_manager.export_records', return_value=mock_file):
+        await process_export_format(message, state)
+        
+        # Проверяем отправку файла
+        message.reply_document.assert_called_once()
+        call_args = message.reply_document.call_args[1]
+        assert isinstance(call_args["document"], types.InputFile)
+        assert call_args["document"].filename.endswith(".xlsx")
+        assert "✅ Данные успешно экспортированы" in call_args["caption"]
+
+@pytest.mark.asyncio
+async def test_export_cancel(message):
+    """Тест отмены экспорта"""
+    message.text = "Отмена"
+    state = Mock()
+    
+    await process_export_format(message, state)
+    
+    message.reply.assert_called_once()
+    assert "Экспорт отменен" in message.reply.call_args[1]["text"]
+    state.finish.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_export_invalid_format(message):
+    """Тест неверного формата экспорта"""
+    message.text = "Invalid Format"
+    state = Mock()
+    
+    await process_export_format(message, state)
+    
+    message.reply.assert_called_once()
+    assert "❌" in message.reply.call_args[1]["text"]
+    assert "выберите формат" in message.reply.call_args[1]["text"]
+
+@pytest.mark.asyncio
+async def test_export_no_data(message, user):
+    """Тест экспорта при отсутствии данных"""
+    message.text = "CSV"
+    state = Mock()
+    
+    # Мокаем экспорт без данных
+    with patch('app.utils.export.export_manager.export_records', return_value=None):
+        await process_export_format(message, state)
+        
+        message.reply.assert_called_once()
+        assert "❌ Ошибка" in message.reply.call_args[1]["text"]
+        assert "нет записей" in message.reply.call_args[1]["text"]
+
+@pytest.mark.asyncio
+async def test_export_error_handling(message, user):
+    """Тест обработки ошибок при экспорте"""
+    message.text = "CSV"
+    state = Mock()
+    
+    # Мокаем ошибку при экспорте
+    with patch('app.utils.export.export_manager.export_records', side_effect=Exception("Test error")):
+        await process_export_format(message, state)
         
         message.reply.assert_called_once()
         assert "❌ Ошибка" in message.reply.call_args[1]["text"] 

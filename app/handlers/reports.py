@@ -5,12 +5,14 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.utils.markdown import text, bold, code
 from app.db.models import User, Record, Workplace
 from app.utils.analytics import analytics
+from app.utils.export import export_manager
 
 class ReportForm(StatesGroup):
     """Состояния формы генерации отчёта"""
     waiting_for_period = State()
     waiting_for_start_date = State()
     waiting_for_end_date = State()
+    waiting_for_export_format = State()
 
 async def reports_handler(message: types.Message):
     """Обработчик команды /reports"""
@@ -22,6 +24,7 @@ async def reports_handler(message: types.Message):
     keyboard.add("Статистика эффективности")
     keyboard.add("График активности")
     keyboard.add("Тепловая карта")
+    keyboard.add("Экспорт данных")
     
     await ReportForm.waiting_for_period.set()
     await message.reply(
@@ -81,11 +84,92 @@ async def process_period_choice(message: types.Message, state: FSMContext):
         await generate_heatmap(message)
         await state.finish()
     
+    elif message.text == "Экспорт данных":
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        keyboard.add("CSV")
+        keyboard.add("JSON")
+        keyboard.add("Excel")
+        keyboard.add("Отмена")
+        
+        await ReportForm.waiting_for_export_format.set()
+        await message.reply(
+            text(
+                bold("📥 Экспорт данных"),
+                "",
+                "Выберите формат экспорта:",
+                sep="\n"
+            ),
+            reply_markup=keyboard,
+            parse_mode=types.ParseMode.MARKDOWN
+        )
+    
     else:
         await message.reply(
             "❌ Пожалуйста, выберите тип отчета из предложенных вариантов",
             parse_mode=types.ParseMode.MARKDOWN
         )
+
+async def process_export_format(message: types.Message, state: FSMContext):
+    """Обработка выбора формата экспорта"""
+    if message.text == "Отмена":
+        await state.finish()
+        await message.reply(
+            "Экспорт отменен",
+            reply_markup=types.ReplyKeyboardRemove(),
+            parse_mode=types.ParseMode.MARKDOWN
+        )
+        return
+    
+    format_mapping = {
+        "CSV": "csv",
+        "JSON": "json",
+        "Excel": "xlsx"
+    }
+    
+    if message.text not in format_mapping:
+        await message.reply(
+            "❌ Пожалуйста, выберите формат из предложенных вариантов",
+            parse_mode=types.ParseMode.MARKDOWN
+        )
+        return
+    
+    # Экспортируем данные
+    export_format = format_mapping[message.text]
+    file_path = await export_manager.export_records(
+        user_id=message.from_user.id,
+        export_format=export_format
+    )
+    
+    if not file_path:
+        await message.reply(
+            text(
+                bold("❌ Ошибка"),
+                "",
+                "Не удалось экспортировать данные",
+                "Возможно, у вас нет записей для экспорта",
+                sep="\n"
+            ),
+            reply_markup=types.ReplyKeyboardRemove(),
+            parse_mode=types.ParseMode.MARKDOWN
+        )
+    else:
+        # Отправляем файл
+        await message.reply_document(
+            types.InputFile(
+                file_path,
+                filename=f"worktime_export_{datetime.now().strftime('%Y%m%d')}{file_path.suffix}"
+            ),
+            caption=text(
+                bold("✅ Данные успешно экспортированы"),
+                "",
+                "В файле содержится информация о всех ваших записях",
+                sep="\n"
+            ),
+            reply_markup=types.ReplyKeyboardRemove(),
+            parse_mode=types.ParseMode.MARKDOWN
+        )
+    
+    await state.finish()
 
 async def process_start_date(message: types.Message, state: FSMContext):
     """Обработка начальной даты"""
@@ -304,4 +388,5 @@ def register_handlers(dp: Dispatcher):
     dp.register_message_handler(reports_handler, commands=['reports'])
     dp.register_message_handler(process_period_choice, state=ReportForm.waiting_for_period)
     dp.register_message_handler(process_start_date, state=ReportForm.waiting_for_start_date)
-    dp.register_message_handler(process_end_date, state=ReportForm.waiting_for_end_date) 
+    dp.register_message_handler(process_end_date, state=ReportForm.waiting_for_end_date)
+    dp.register_message_handler(process_export_format, state=ReportForm.waiting_for_export_format) 

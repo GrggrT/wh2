@@ -4,4 +4,20 @@ aerich==0.10.0
 pydantic==1.10.7
 apscheduler==3.9.1
 python-dotenv==1.0.0
-aiohttp==3.8.1 
+aiohttp==3.8.1
+
+# Testing
+pytest==7.4.0
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+pytest-mock==3.11.1
+coverage==7.3.0
+
+# Linting
+flake8==6.1.0
+black==23.7.0
+isort==5.12.0
+
+# Development
+ipython==8.14.0
+ipdb==0.13.13 

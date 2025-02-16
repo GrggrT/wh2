@@ -1,24 +1,34 @@
+import os
 import logging
-import asyncio
+import json
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
+from pathlib import Path
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 from io import BytesIO
+from tortoise.functions import Count, Sum
 from app.db.models import User, Workplace, Record
 from app.utils.profiler import profiler
 
 logger = logging.getLogger(__name__)
 
 class Analytics:
-    """Класс для анализа и визуализации данных"""
+    """Класс для аналитики и визуализации данных"""
     
     def __init__(self):
         """Инициализация аналитики"""
+        self.cache_dir = Path("cache/analytics")
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Настройки кэширования
+        self.cache_ttl = 3600  # 1 час
         self.cached_data = {}
-        self.cache_ttl = 300  # Время жизни кэша в секундах
-        self.cache_last_update = {}
+        
+        # Настройки визуализации
+        plt.style.use('seaborn')
+        sns.set_palette("husl")
     
     def _is_cache_valid(self, cache_key: str) -> bool:
         """
@@ -27,20 +37,21 @@ class Analytics:
         :param cache_key: Ключ кэша
         :return: True если кэш валиден
         """
-        if cache_key not in self.cache_last_update:
+        if cache_key not in self.cached_data:
             return False
         
-        return (datetime.now() - self.cache_last_update[cache_key]).total_seconds() < self.cache_ttl
+        cache_time = self.cached_data[cache_key]["timestamp"]
+        return (datetime.now() - cache_time).total_seconds() < self.cache_ttl
     
     def _get_cached_data(self, cache_key: str) -> Optional[Any]:
         """
         Получение данных из кэша
         
         :param cache_key: Ключ кэша
-        :return: Данные из кэша или None
+        :return: Данные или None
         """
         if self._is_cache_valid(cache_key):
-            return self.cached_data.get(cache_key)
+            return self.cached_data[cache_key]["data"]
         return None
     
     def _set_cached_data(self, cache_key: str, data: Any):
@@ -50,8 +61,10 @@ class Analytics:
         :param cache_key: Ключ кэша
         :param data: Данные для кэширования
         """
-        self.cached_data[cache_key] = data
-        self.cache_last_update[cache_key] = datetime.now()
+        self.cached_data[cache_key] = {
+            "data": data,
+            "timestamp": datetime.now()
+        }
     
     @profiler.profile(name="get_user_statistics")
     async def get_user_statistics(self, days: int = 30) -> Dict[str, Any]:
@@ -69,33 +82,33 @@ class Analytics:
         try:
             start_date = datetime.now() - timedelta(days=days)
             
-            # Получаем общее количество пользователей
+            # Получаем общую статистику
             total_users = await User.all().count()
-            
-            # Получаем активных пользователей
             active_users = await User.filter(
                 records__start_time__gte=start_date
             ).distinct().count()
             
-            # Получаем все записи за период
-            records = await Record.filter(
+            total_records = await Record.filter(
                 start_time__gte=start_date
-            ).prefetch_related('user', 'workplace')
+            ).count()
             
-            # Вычисляем статистику
+            # Вычисляем среднюю продолжительность работы
+            records = await Record.filter(
+                start_time__gte=start_date,
+                end_time__isnull=False
+            ).all()
+            
             total_duration = timedelta()
-            total_records = len(records)
-            
             for record in records:
-                if record.end_time:
-                    total_duration += record.end_time - record.start_time
+                total_duration += record.end_time - record.start_time
             
             avg_duration = (
-                total_duration.total_seconds() / total_records / 3600
-                if total_records > 0 else 0
+                total_duration.total_seconds() / len(records) / 3600
+                if records else 0
             )
             
-            activity_rate = (active_users / total_users * 100) if total_users > 0 else 0
+            # Вычисляем активность
+            activity_rate = (active_users / total_users * 100) if total_users else 0
             
             stats = {
                 "total_users": total_users,
@@ -128,7 +141,7 @@ class Analytics:
         try:
             start_date = datetime.now() - timedelta(days=days)
             
-            # Получаем все рабочие места с записями
+            # Получаем статистику по рабочим местам
             workplaces = await Workplace.all().prefetch_related('records')
             workplace_stats = []
             
@@ -138,32 +151,37 @@ class Analytics:
                     if r.start_time >= start_date and r.end_time
                 ]
                 
-                if records:
-                    total_duration = sum(
-                        (r.end_time - r.start_time).total_seconds() / 3600
-                        for r in records
+                if not records:
+                    continue
+                
+                total_duration = timedelta()
+                total_earnings = 0
+                
+                for record in records:
+                    duration = record.end_time - record.start_time
+                    total_duration += duration
+                    total_earnings += (
+                        duration.total_seconds() / 3600 * float(workplace.rate)
                     )
-                    total_earnings = total_duration * float(workplace.rate)
-                    
-                    workplace_stats.append({
-                        "name": workplace.name,
-                        "records_count": len(records),
-                        "total_hours": round(total_duration, 2),
-                        "total_earnings": round(total_earnings, 2),
-                        "avg_daily_hours": round(total_duration / days, 2)
-                    })
+                
+                workplace_stats.append({
+                    "name": workplace.name,
+                    "records_count": len(records),
+                    "total_hours": round(total_duration.total_seconds() / 3600, 2),
+                    "total_earnings": round(total_earnings, 2),
+                    "avg_daily_hours": round(
+                        total_duration.total_seconds() / 3600 / days, 2
+                    )
+                })
             
-            # Сортируем по количеству записей
-            workplace_stats.sort(key=lambda x: x["records_count"], reverse=True)
+            # Сортируем по заработку
+            workplace_stats.sort(key=lambda x: x["total_earnings"], reverse=True)
             
             stats = {
                 "workplaces": workplace_stats,
-                "total_workplaces": len(workplaces),
+                "total_workplaces": len(workplace_stats),
                 "most_used": workplace_stats[0] if workplace_stats else None,
-                "most_profitable": max(
-                    workplace_stats,
-                    key=lambda x: x["total_earnings"]
-                ) if workplace_stats else None
+                "most_profitable": workplace_stats[0] if workplace_stats else None
             }
             
             self._set_cached_data(cache_key, stats)
@@ -184,38 +202,52 @@ class Analytics:
         try:
             start_date = datetime.now() - timedelta(days=days)
             
-            # Получаем все записи за период
+            # Получаем данные по дням
             records = await Record.filter(
                 start_time__gte=start_date
-            ).prefetch_related('workplace')
+            ).all()
             
-            # Группируем данные по дням
-            daily_hours = {}
-            
+            # Группируем по дням
+            daily_stats = {}
             for record in records:
+                day = record.start_time.date()
+                if day not in daily_stats:
+                    daily_stats[day] = {
+                        "count": 0,
+                        "hours": 0
+                    }
+                
+                daily_stats[day]["count"] += 1
                 if record.end_time:
-                    day = record.start_time.date()
                     duration = (record.end_time - record.start_time).total_seconds() / 3600
-                    daily_hours[day] = daily_hours.get(day, 0) + duration
+                    daily_stats[day]["hours"] += duration
             
             # Создаем график
             plt.figure(figsize=(12, 6))
-            dates = sorted(daily_hours.keys())
-            hours = [daily_hours[date] for date in dates]
+            dates = sorted(daily_stats.keys())
+            counts = [daily_stats[d]["count"] for d in dates]
+            hours = [daily_stats[d]["hours"] for d in dates]
             
-            plt.plot(dates, hours, marker='o')
-            plt.title('Активность по дням')
-            plt.xlabel('Дата')
-            plt.ylabel('Часы')
-            plt.grid(True)
+            plt.subplot(2, 1, 1)
+            plt.plot(dates, counts, marker='o')
+            plt.title("Количество записей по дням")
             plt.xticks(rotation=45)
+            plt.grid(True)
             
-            # Сохраняем график в буфер
-            buf = BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight')
+            plt.subplot(2, 1, 2)
+            plt.plot(dates, hours, marker='o', color='green')
+            plt.title("Часы работы по дням")
+            plt.xticks(rotation=45)
+            plt.grid(True)
+            
+            plt.tight_layout()
+            
+            # Сохраняем график
+            buffer = BytesIO()
+            plt.savefig(buffer, format='png', dpi=300)
             plt.close()
             
-            return buf.getvalue()
+            return buffer.getvalue()
         
         except Exception as e:
             logger.error(f"Ошибка при генерации графика активности: {e}")
@@ -232,44 +264,42 @@ class Analytics:
         try:
             start_date = datetime.now() - timedelta(days=days)
             
-            # Получаем все записи за период
+            # Получаем данные
             records = await Record.filter(
-                start_time__gte=start_date
-            ).prefetch_related('workplace')
+                start_time__gte=start_date,
+                end_time__isnull=False
+            ).all()
             
             # Создаем матрицу для тепловой карты
-            hours = range(24)
-            weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
-            activity_matrix = np.zeros((7, 24))
+            hours = 24
+            days_of_week = 7
+            heatmap_data = np.zeros((days_of_week, hours))
             
             for record in records:
-                if record.end_time:
-                    weekday = record.start_time.weekday()
-                    hour = record.start_time.hour
-                    duration = (record.end_time - record.start_time).total_seconds() / 3600
-                    activity_matrix[weekday][hour] += duration
+                day = record.start_time.weekday()
+                hour = record.start_time.hour
+                duration = (record.end_time - record.start_time).total_seconds() / 3600
+                heatmap_data[day][hour] += duration
             
             # Создаем тепловую карту
-            plt.figure(figsize=(15, 8))
+            plt.figure(figsize=(12, 8))
             sns.heatmap(
-                activity_matrix,
-                xticklabels=hours,
-                yticklabels=weekdays,
+                heatmap_data,
                 cmap='YlOrRd',
-                annot=True,
-                fmt='.1f'
+                xticklabels=range(24),
+                yticklabels=['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
             )
             
-            plt.title('Тепловая карта активности')
-            plt.xlabel('Час')
-            plt.ylabel('День недели')
+            plt.title("Тепловая карта активности")
+            plt.xlabel("Час")
+            plt.ylabel("День недели")
             
-            # Сохраняем карту в буфер
-            buf = BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight')
+            # Сохраняем карту
+            buffer = BytesIO()
+            plt.savefig(buffer, format='png', dpi=300)
             plt.close()
             
-            return buf.getvalue()
+            return buffer.getvalue()
         
         except Exception as e:
             logger.error(f"Ошибка при генерации тепловой карты: {e}")
@@ -278,7 +308,7 @@ class Analytics:
     @profiler.profile(name="get_efficiency_metrics")
     async def get_efficiency_metrics(self, user_id: int, days: int = 30) -> Dict[str, Any]:
         """
-        Получение метрик эффективности для пользователя
+        Получение метрик эффективности
         
         :param user_id: ID пользователя
         :param days: Количество дней для анализа
@@ -287,11 +317,11 @@ class Analytics:
         try:
             start_date = datetime.now() - timedelta(days=days)
             
-            # Получаем пользователя и его записи
-            user = await User.get(telegram_id=user_id)
+            # Получаем записи пользователя
             records = await Record.filter(
-                user=user,
-                start_time__gte=start_date
+                user_id=user_id,
+                start_time__gte=start_date,
+                end_time__isnull=False
             ).prefetch_related('workplace')
             
             if not records:
@@ -306,28 +336,44 @@ class Analytics:
             # Вычисляем метрики
             total_duration = timedelta()
             total_earnings = 0
+            daily_hours = {}
             
             for record in records:
-                if record.end_time:
-                    duration = record.end_time - record.start_time
-                    total_duration += duration
-                    total_earnings += (
-                        duration.total_seconds() / 3600 * float(record.workplace.rate)
-                    )
+                duration = record.end_time - record.start_time
+                total_duration += duration
+                
+                earnings = (
+                    duration.total_seconds() / 3600 * float(record.workplace.rate)
+                )
+                total_earnings += earnings
+                
+                day = record.start_time.date()
+                if day not in daily_hours:
+                    daily_hours[day] = 0
+                daily_hours[day] += duration.total_seconds() / 3600
             
             total_hours = total_duration.total_seconds() / 3600
-            avg_daily_hours = total_hours / days
+            avg_daily_hours = total_hours / len(daily_hours) if daily_hours else 0
             
             # Вычисляем эффективность
             efficiency_score = min(100, (avg_daily_hours / 8) * 100)
             
             # Формируем рекомендации
             if efficiency_score < 50:
-                recommendation = "Рекомендуется увеличить количество рабочих часов"
+                recommendation = (
+                    "Рекомендуется увеличить количество рабочих часов "
+                    "для повышения эффективности"
+                )
             elif efficiency_score < 80:
-                recommendation = "Хороший результат, есть потенциал для роста"
+                recommendation = (
+                    "Хороший результат! Для улучшения попробуйте "
+                    "оптимизировать распределение времени"
+                )
             else:
-                recommendation = "Отличная эффективность! Поддерживайте текущий темп"
+                recommendation = (
+                    "Отличный результат! Продолжайте поддерживать "
+                    "текущий уровень эффективности"
+                )
             
             return {
                 "total_hours": round(total_hours, 2),

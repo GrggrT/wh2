@@ -23,6 +23,7 @@ from app.middlewares.rate_limiter import RateLimiterMiddleware
 
 # Импорт утилит
 from app.utils.health_check import HealthCheck
+from app.utils.scheduler import setup_scheduler
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -63,12 +64,17 @@ async def on_startup(dp: Dispatcher):
         await Tortoise.generate_schemas()
         logger.info("База данных инициализирована")
 
+        # Инициализация планировщика задач
+        scheduler = setup_scheduler(dp.bot)
+        logger.info("Планировщик задач инициализирован")
+
         # Отправка уведомления администратору о запуске бота
         await dp.bot.send_message(
             ADMIN_ID,
             "🚀 Бот запущен и готов к работе!\n\n"
             f"Версия API: {(await dp.bot.get_me()).username}\n"
             f"База данных: подключена\n"
+            f"Планировщик: активен\n"
             f"Режим логирования: {os.getenv('LOG_LEVEL', 'INFO')}"
         )
 
@@ -98,6 +104,12 @@ async def on_shutdown(dp: Dispatcher):
         )
     except Exception as e:
         logger.error(f"Ошибка при отправке уведомления о выключении: {e}")
+    
+    # Остановка планировщика
+    from app.utils.scheduler import scheduler
+    if scheduler:
+        scheduler.shutdown()
+        logger.info("Планировщик задач остановлен")
     
     # Закрытие соединений с базой данных
     await Tortoise.close_connections()

@@ -3,6 +3,7 @@ from collections import defaultdict
 from aiogram import types
 from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.utils.markdown import text, bold
+from app.utils.logger import log_manager
 
 class RateLimiterMiddleware(BaseMiddleware):
     """
@@ -71,12 +72,25 @@ class RateLimiterMiddleware(BaseMiddleware):
         if not isinstance(event, types.Message):
             return await handler(event, data)
         
+        start_time = time.time()
         user_id = event.from_user.id
         command = self._get_command(event)
-        current_time = time.time()
         
-        if not self._check_limit(user_id, command, current_time):
+        # Проверяем лимит запросов
+        if not self._check_limit(user_id, command, start_time):
             limit, period = self.limits.get(command, self.limits['default'])
+            
+            # Логируем превышение лимита
+            await log_manager.log_warning(
+                "Превышен лимит запросов",
+                context={
+                    "user_id": user_id,
+                    "command": command,
+                    "limit": limit,
+                    "period": period
+                }
+            )
+            
             await event.reply(
                 text(
                     bold("⚠️ Превышен лимит запросов"),
@@ -89,4 +103,11 @@ class RateLimiterMiddleware(BaseMiddleware):
             )
             return True
         
-        return await handler(event, data) 
+        # Обрабатываем запрос
+        result = await handler(event, data)
+        
+        # Логируем запрос
+        processing_time = time.time() - start_time
+        await log_manager.log_request(user_id, command, processing_time)
+        
+        return result 

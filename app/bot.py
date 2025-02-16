@@ -7,6 +7,7 @@ from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from tortoise import Tortoise
 from dotenv import load_dotenv
+from pathlib import Path
 
 # Импорт обработчиков
 from app.handlers import (
@@ -29,6 +30,7 @@ from app.utils.webhook import WebhookServer
 from app.utils.notifications import setup_notifications, notification_manager
 from app.utils.performance import optimizer
 from app.utils.backup import backup_manager
+from app.utils.logger import log_manager
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -87,6 +89,10 @@ async def on_startup(dp: Dispatcher):
         asyncio.create_task(backup_manager.start())
         logger.info("✅ Система резервного копирования запущена")
 
+        # Инициализация системы логирования
+        await log_manager.log_info("Бот запускается...")
+        logger.info("✅ Система логирования запущена")
+
         # Отправка уведомления администратору о запуске бота
         await dp.bot.send_message(
             ADMIN_ID,
@@ -144,6 +150,14 @@ async def on_shutdown(dp: Dispatcher):
     # Закрытие соединений с базой данных
     await Tortoise.close_connections()
     logger.info("Соединения с базой данных закрыты")
+
+    # Экспорт логов перед выключением
+    export_dir = Path("logs_export")
+    export_dir.mkdir(exist_ok=True)
+    archive_path = await log_manager.export_logs(export_dir)
+    if archive_path:
+        logger.info(f"Логи экспортированы в {archive_path}")
+    logger.info("❌ Система логирования остановлена")
 
 def register_handlers(dp: Dispatcher):
     """

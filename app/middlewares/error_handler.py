@@ -4,6 +4,7 @@ import traceback
 from aiogram import types
 from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.utils.markdown import text, bold, code
+from app.utils.logger import log_manager
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +23,25 @@ class ErrorHandlerMiddleware(BaseMiddleware):
         try:
             return await handler(event, data)
         except Exception as e:
-            # Получаем полный стек ошибки
-            error_msg = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-            logger.error(f"Ошибка при обработке события: {error_msg}")
+            # Логируем ошибку
+            context = {
+                "handler": handler.__name__ if hasattr(handler, "__name__") else str(handler),
+                "event_type": type(event).__name__,
+                "data": str(data)
+            }
+            
+            if isinstance(event, types.Message):
+                context.update({
+                    "chat_id": event.chat.id,
+                    "message_text": event.text,
+                    "command": event.get_command()
+                })
+            
+            await log_manager.log_error(
+                e,
+                user_id=event.from_user.id if hasattr(event, "from_user") else None,
+                context=context
+            )
             
             # Отправляем сообщение пользователю
             if isinstance(event, types.Message):
@@ -55,7 +72,7 @@ class ErrorHandlerMiddleware(BaseMiddleware):
                             f"Команда: {event.text}",
                             "",
                             "Стек ошибки:",
-                            code(error_msg[:3000]),  # Ограничиваем длину сообщения
+                            code(traceback.format_exc()[:3000]),  # Ограничиваем длину сообщения
                             sep="\n"
                         )
                         
@@ -66,7 +83,10 @@ class ErrorHandlerMiddleware(BaseMiddleware):
                                 parse_mode=types.ParseMode.MARKDOWN
                             )
                         except Exception as send_err:
-                            logger.error(f"Не удалось отправить сообщение админу: {send_err}")
+                            await log_manager.log_error(
+                                send_err,
+                                context={"error": "Не удалось отправить сообщение админу"}
+                            )
             
             # Возвращаем True, чтобы предотвратить дальнейшую обработку ошибки
             return True 

@@ -4,6 +4,7 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.utils.markdown import text, bold, code
 from app.db.models import User, Record, Workplace
+from app.utils.analytics import analytics
 
 class ReportForm(StatesGroup):
     """Состояния формы генерации отчёта"""
@@ -18,10 +19,18 @@ async def reports_handler(message: types.Message):
     keyboard.add("За неделю")
     keyboard.add("За месяц")
     keyboard.add("За произвольный период")
+    keyboard.add("Статистика эффективности")
+    keyboard.add("График активности")
+    keyboard.add("Тепловая карта")
     
     await ReportForm.waiting_for_period.set()
     await message.reply(
-        "Выберите период для отчёта:",
+        text(
+            bold("📊 Отчеты и аналитика"),
+            "",
+            "Выберите тип отчета:",
+            sep="\n"
+        ),
         reply_markup=keyboard,
         parse_mode=types.ParseMode.MARKDOWN
     )
@@ -60,9 +69,21 @@ async def process_period_choice(message: types.Message, state: FSMContext):
             parse_mode=types.ParseMode.MARKDOWN
         )
     
+    elif message.text == "Статистика эффективности":
+        await generate_efficiency_report(message)
+        await state.finish()
+    
+    elif message.text == "График активности":
+        await generate_activity_chart(message)
+        await state.finish()
+    
+    elif message.text == "Тепловая карта":
+        await generate_heatmap(message)
+        await state.finish()
+    
     else:
         await message.reply(
-            "❌ Пожалуйста, выберите период из предложенных вариантов",
+            "❌ Пожалуйста, выберите тип отчета из предложенных вариантов",
             parse_mode=types.ParseMode.MARKDOWN
         )
 
@@ -188,6 +209,93 @@ async def generate_report(message: types.Message, start_date: datetime.date, end
     
     await message.reply(
         text(*report_lines, sep="\n"),
+        parse_mode=types.ParseMode.MARKDOWN
+    )
+
+async def generate_efficiency_report(message: types.Message):
+    """Генерация отчета об эффективности"""
+    metrics = await analytics.get_efficiency_metrics(message.from_user.id)
+    
+    if not metrics:
+        await message.reply(
+            text(
+                bold("❌ Ошибка"),
+                "",
+                "Не удалось получить метрики эффективности",
+                sep="\n"
+            ),
+            parse_mode=types.ParseMode.MARKDOWN
+        )
+        return
+    
+    report_lines = [
+        bold("📊 Анализ эффективности"),
+        "",
+        f"⏱ Общее количество часов: {metrics['total_hours']:.2f}",
+        f"💰 Общий заработок: {metrics['total_earnings']:.2f} руб",
+        f"📈 Среднее количество часов в день: {metrics['avg_daily_hours']:.2f}",
+        f"✨ Оценка эффективности: {metrics['efficiency_score']:.1f}%",
+        "",
+        bold("💡 Рекомендация:"),
+        metrics['recommendation']
+    ]
+    
+    await message.reply(
+        text(*report_lines, sep="\n"),
+        parse_mode=types.ParseMode.MARKDOWN
+    )
+
+async def generate_activity_chart(message: types.Message):
+    """Генерация графика активности"""
+    chart_data = await analytics.generate_activity_chart()
+    
+    if not chart_data:
+        await message.reply(
+            text(
+                bold("❌ Ошибка"),
+                "",
+                "Не удалось сгенерировать график активности",
+                sep="\n"
+            ),
+            parse_mode=types.ParseMode.MARKDOWN
+        )
+        return
+    
+    await message.reply_photo(
+        types.InputFile(chart_data),
+        caption=text(
+            bold("📈 График активности"),
+            "",
+            "Показывает распределение рабочего времени и количество записей по дням",
+            sep="\n"
+        ),
+        parse_mode=types.ParseMode.MARKDOWN
+    )
+
+async def generate_heatmap(message: types.Message):
+    """Генерация тепловой карты"""
+    heatmap_data = await analytics.generate_heatmap()
+    
+    if not heatmap_data:
+        await message.reply(
+            text(
+                bold("❌ Ошибка"),
+                "",
+                "Не удалось сгенерировать тепловую карту",
+                sep="\n"
+            ),
+            parse_mode=types.ParseMode.MARKDOWN
+        )
+        return
+    
+    await message.reply_photo(
+        types.InputFile(heatmap_data),
+        caption=text(
+            bold("🌡 Тепловая карта активности"),
+            "",
+            "Показывает распределение рабочего времени по дням недели и часам",
+            sep="\n"
+        ),
         parse_mode=types.ParseMode.MARKDOWN
     )
 

@@ -25,6 +25,7 @@ from app.middlewares.rate_limiter import RateLimiterMiddleware
 # Импорт утилит
 from app.utils.health_check import HealthCheck
 from app.utils.scheduler import setup_scheduler
+from app.utils.webhook import WebhookServer
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -152,7 +153,25 @@ async def main():
     # Запуск бота
     try:
         logger.info("Бот запущен")
-        await dp.start_polling()
+        
+        # Проверяем режим работы
+        webhook_url = os.getenv("WEBHOOK_URL")
+        if webhook_url:
+            # Webhook режим
+            logger.info("Запуск в режиме webhook")
+            webhook_server = WebhookServer(bot, dp)
+            await webhook_server.start()
+            
+            # Ждем завершения
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await webhook_server.stop()
+        else:
+            # Long polling режим
+            logger.info("Запуск в режиме long polling")
+            await dp.start_polling()
+    
     except Exception as e:
         logger.error(f"Ошибка при работе бота: {e}")
         # Отправка уведомления об ошибке администратору

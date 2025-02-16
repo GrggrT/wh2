@@ -26,7 +26,7 @@ from app.middlewares.rate_limiter import RateLimiterMiddleware
 from app.utils.health_check import HealthCheck
 from app.utils.scheduler import setup_scheduler
 from app.utils.webhook import WebhookServer
-from app.utils.notifications import setup_notifications
+from app.utils.notifications import setup_notifications, notification_manager
 from app.utils.performance import optimizer
 
 # Загрузка переменных окружения
@@ -75,7 +75,8 @@ async def on_startup(dp: Dispatcher):
         # Инициализация системы уведомлений
         notifications = setup_notifications(dp.bot)
         asyncio.create_task(notifications.start())
-        logger.info("Система уведомлений инициализирована")
+        asyncio.create_task(check_notifications())
+        logger.info("✅ Система уведомлений запущена")
         
         # Запуск системы оптимизации
         asyncio.create_task(optimizer.start_monitoring())
@@ -127,10 +128,9 @@ async def on_shutdown(dp: Dispatcher):
         logger.info("Планировщик задач остановлен")
     
     # Остановка системы уведомлений
-    from app.utils.notifications import notification_manager
     if notification_manager:
         await notification_manager.stop()
-        logger.info("Система уведомлений остановлена")
+    logger.info("❌ Система уведомлений остановлена")
     
     # Закрытие соединений с базой данных
     await Tortoise.close_connections()
@@ -147,6 +147,17 @@ def register_handlers(dp: Dispatcher):
     reports.register_handlers(dp)
     settings.register_handlers(dp)
     calendar.register_handlers(dp)
+
+async def check_notifications():
+    """Периодическая проверка и отправка уведомлений"""
+    while True:
+        try:
+            if notification_manager:
+                await notification_manager.check_unfinished_records()
+                await notification_manager.check_performance_alerts()
+            await asyncio.sleep(300)  # Проверка каждые 5 минут
+        except Exception as e:
+            logger.error(f"Ошибка при проверке уведомлений: {e}")
 
 async def main():
     """

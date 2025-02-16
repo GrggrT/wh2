@@ -223,4 +223,4 @@ def setup_notifications(bot: Bot) -> NotificationManager:
     """
     global notification_manager
     notification_manager = NotificationManager(bot)
-    return notification_manager 
+    return notification_manager

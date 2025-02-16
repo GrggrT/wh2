@@ -28,6 +28,7 @@ from app.utils.scheduler import setup_scheduler
 from app.utils.webhook import WebhookServer
 from app.utils.notifications import setup_notifications, notification_manager
 from app.utils.performance import optimizer
+from app.utils.backup import backup_manager
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -82,6 +83,10 @@ async def on_startup(dp: Dispatcher):
         asyncio.create_task(optimizer.start_monitoring())
         logger.info("Система оптимизации запущена")
 
+        # Запуск системы резервного копирования
+        asyncio.create_task(backup_manager.start())
+        logger.info("✅ Система резервного копирования запущена")
+
         # Отправка уведомления администратору о запуске бота
         await dp.bot.send_message(
             ADMIN_ID,
@@ -131,6 +136,10 @@ async def on_shutdown(dp: Dispatcher):
     if notification_manager:
         await notification_manager.stop()
     logger.info("❌ Система уведомлений остановлена")
+    
+    # Остановка системы резервного копирования
+    await backup_manager.stop()
+    logger.info("❌ Система резервного копирования остановлена")
     
     # Закрытие соединений с базой данных
     await Tortoise.close_connections()

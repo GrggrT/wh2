@@ -27,6 +27,7 @@ from app.utils.health_check import HealthCheck
 from app.utils.scheduler import setup_scheduler
 from app.utils.webhook import WebhookServer
 from app.utils.notifications import setup_notifications
+from app.utils.performance import optimizer
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -75,6 +76,10 @@ async def on_startup(dp: Dispatcher):
         notifications = setup_notifications(dp.bot)
         asyncio.create_task(notifications.start())
         logger.info("Система уведомлений инициализирована")
+        
+        # Запуск системы оптимизации
+        asyncio.create_task(optimizer.start_monitoring())
+        logger.info("Система оптимизации запущена")
 
         # Отправка уведомления администратору о запуске бота
         await dp.bot.send_message(
@@ -84,6 +89,7 @@ async def on_startup(dp: Dispatcher):
             f"База данных: подключена\n"
             f"Планировщик: активен\n"
             f"Уведомления: активны\n"
+            f"Оптимизация: активна\n"
             f"Режим логирования: {os.getenv('LOG_LEVEL', 'INFO')}"
         )
 
